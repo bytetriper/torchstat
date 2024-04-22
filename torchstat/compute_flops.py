@@ -16,6 +16,10 @@ def compute_flops(module, inp, out):
         return compute_Upsample_flops(module, inp, out)
     elif isinstance(module, nn.Linear):
         return compute_Linear_flops(module, inp, out)
+    elif isinstance(module, nn.GroupNorm):
+        return compute_GroupNorm_flops(module, inp, out)
+    elif isinstance(module, nn.Identity):
+        return 0 # Identity layer does not have any flops
     else:
         print(f"[Flops]: {type(module).__name__} is not supported!")
         return 0
@@ -56,6 +60,14 @@ def compute_BatchNorm2d_flops(module, inp, out):
         batch_flops *= 2
     return batch_flops
 
+def compute_GroupNorm_flops(module, inp, out):
+    assert isinstance(module, nn.GroupNorm)
+    assert len(inp.size()) == 4 and len(inp.size()) == len(out.size())
+    in_c, in_h, in_w = inp.size()[1:]
+    batch_flops = np.prod(inp.shape)
+    if module.affine:
+        batch_flops *= 2
+    return batch_flops
 
 def compute_ReLU_flops(module, inp, out):
     assert isinstance(module, (nn.ReLU, nn.ReLU6, nn.PReLU, nn.ELU, nn.LeakyReLU))

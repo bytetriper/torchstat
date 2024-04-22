@@ -62,7 +62,7 @@ class ModelHook(object):
             for name, p in module._parameters.items():
                 parameter_quantity += (0 if p is None else torch.numel(p.data))
             module.parameter_quantity = torch.from_numpy(
-                np.array([parameter_quantity], dtype=np.long))
+                np.array([parameter_quantity], dtype=np.longlong))
 
             inference_memory = 1
             for s in output.size()[1:]:

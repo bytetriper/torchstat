@@ -54,12 +54,25 @@ def compute_BatchNorm2d_madd(module, inp, out):
 
     in_c, in_h, in_w = inp.size()[1:]
 
+    
+    # 1. sub mean
+    # 2. div standard deviation
+    # 3. mul alpha
+    # 4. add beta
+    
+    return 4 * in_c * in_h * in_w
+
+def compute_GroupNorm_madd(module, inp, out):
+    assert isinstance(module, nn.GroupNorm)
+    assert len(inp.size()) == 4 and len(inp.size()) == len(out.size())
+
+    in_c, in_h, in_w = inp.size()[1:]
+
     # 1. sub mean
     # 2. div standard deviation
     # 3. mul alpha
     # 4. add beta
     return 4 * in_c * in_h * in_w
-
 
 def compute_MaxPool2d_madd(module, inp, out):
     assert isinstance(module, nn.MaxPool2d)
@@ -156,6 +169,10 @@ def compute_madd(module, inp, out):
         return compute_Linear_madd(module, inp, out)
     elif isinstance(module, nn.Bilinear):
         return compute_Bilinear_madd(module, inp[0], inp[1], out)
+    elif isinstance(module, nn.GroupNorm):
+        return compute_GroupNorm_madd(module, inp, out)
+    elif isinstance(module, nn.Identity):
+        return 0 # Identity layer does not have any MAdd
     else:
         print(f"[MAdd]: {type(module).__name__} is not supported!")
         return 0
