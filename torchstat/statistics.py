@@ -29,7 +29,8 @@ def convert_leaf_modules_to_stat_tree(leaf_modules):
             create_index += 1
             stat_node_name = '.'.join(names[0:i+1])
             parent_node = get_parent_node(root_node, stat_node_name)
-            node = StatNode(name=stat_node_name, parent=parent_node)
+            is_leaf = i == len(names) - 1
+            node = StatNode(name=stat_node_name, parent=parent_node, is_leaf=is_leaf)
             parent_node.add_child(node)
             if i == len(names) - 1:  # leaf module itself
                 input_shape = leaf_module.input_shape.numpy().tolist()
@@ -42,6 +43,7 @@ def convert_leaf_modules_to_stat_tree(leaf_modules):
                 node.Flops = leaf_module.Flops.numpy()[0]
                 node.duration = leaf_module.duration.numpy()[0]
                 node.Memory = leaf_module.Memory.numpy().tolist()
+                node.update_leaf_child()
     return StatTree(root_node)
 
 
@@ -55,17 +57,17 @@ class ModelStat(object):
 
     def _analyze_model(self):
         model_hook = ModelHook(self._model, self._input_size)
-        leaf_modules = model_hook.retrieve_leaf_modules()
-        stat_tree = convert_leaf_modules_to_stat_tree(leaf_modules)
-        collected_nodes = stat_tree.get_collected_stat_nodes(self._query_granularity)
+        self.leaf_modules = model_hook.retrieve_leaf_modules()
+        self.stat_tree = convert_leaf_modules_to_stat_tree(self.leaf_modules)
+        collected_nodes = self.stat_tree.get_collected_stat_nodes(self._query_granularity)
         return collected_nodes
 
     def show_report(self):
         collected_nodes = self._analyze_model()
-        report = report_format(collected_nodes)
-        print(report)
+        report, report_df = report_format(collected_nodes)
+        return report, report_df
 
 
 def stat(model, input_size, query_granularity=1):
     ms = ModelStat(model, input_size, query_granularity)
-    ms.show_report()
+    print(ms.show_report()[0])
