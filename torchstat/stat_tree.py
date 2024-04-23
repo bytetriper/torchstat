@@ -53,9 +53,7 @@ class StatNode(object):
         self._duration_percent = 0
 
         self.is_leaf = is_leaf
-        self.num_leaf_children = [0]
-        if is_leaf:
-            self.num_leaf_children[0] = 1
+        self.num_leaf_children = [1] # number of leaf children at each depth
         self._granularity = 1
         self._depth = 1
         self.parent = parent
@@ -79,6 +77,7 @@ class StatNode(object):
 
     @property
     def depth(self):
+        return self._depth
         d = self._depth
         if len(self.children) > 0:
             d += max([child.depth for child in self.children])
@@ -110,7 +109,7 @@ class StatNode(object):
 
     @property
     def parameter_quantity(self):
-        # return self.parameters_quantity
+        return self._parameter_quantity
         total_parameter_quantity = self._parameter_quantity
         for child in self.children:
             total_parameter_quantity += child.parameter_quantity
@@ -123,6 +122,7 @@ class StatNode(object):
 
     @property
     def inference_memory(self):
+        return self._inference_memory
         total_inference_memory = self._inference_memory
         for child in self.children:
             total_inference_memory += child.inference_memory
@@ -134,6 +134,7 @@ class StatNode(object):
 
     @property
     def MAdd(self):
+        return self._MAdd
         total_MAdd = self._MAdd
         for child in self.children:
             total_MAdd += child.MAdd
@@ -145,6 +146,7 @@ class StatNode(object):
 
     @property
     def Flops(self):
+        return self._Flops
         total_Flops = self._Flops
         for child in self.children:
             total_Flops += child.Flops
@@ -156,6 +158,7 @@ class StatNode(object):
 
     @property
     def Memory(self):
+        return self._Memory
         total_Memory = self._Memory
         for child in self.children:
             total_Memory[0] += child.Memory[0]
@@ -193,14 +196,19 @@ class StatNode(object):
 
         if self.find_child_index(node.name) == -1:  # not exist
             self.children.append(node)
+            cur_node = self
+            idx = 1
+            while cur_node is not None:
+                if len(cur_node.num_leaf_children) <= idx:
+                    cur_node.num_leaf_children = cur_node.num_leaf_children + [0]*(idx - len(cur_node.num_leaf_children) + 1)
+                cur_node.num_leaf_children[idx] += 1
+                cur_node = cur_node.parent
+                idx += 1
 
     def update_leaf_child(self):
         cur_node = self
         depth = 1
         while cur_node.parent is not None:
-            while len(cur_node.parent.num_leaf_children) <= (depth):
-                cur_node.parent.num_leaf_children.append(0)
-            cur_node.parent.num_leaf_children[depth] += 1
             cur_node.parent.parameter_quantity += self.parameter_quantity
             cur_node.parent.inference_memory += self.inference_memory
             cur_node.parent.MAdd += self.MAdd

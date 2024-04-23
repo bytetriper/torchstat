@@ -17,25 +17,27 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 SAMPLE_SPREADSHEET_ID = '1gaDAHXNkthmyBFkFWlRmrX1YxPAaJq4tz9F-H_YzXI0'
 SAMPLE_RANGE_NAME = 'VAE-VAE:[flops]'
 
-def init_googleapi_credentials():
+def init_googleapi_credentials(json_dir_path:str):
     creds = None
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if os.path.exists("token.json"):
-      creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    token_json_path = os.path.join(json_dir_path, "token.json")
+    if os.path.isfile(token_json_path):
+      creds = Credentials.from_authorized_user_file(token_json_path, SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         print("[INFO] No valid credentials found. Please login.")
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            cred_path = os.path.join(json_dir_path, "credentials.json")
             flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
+               cred_path, SCOPES
             )
             creds = flow.run_local_server(port=0)
     # Save the credentials for the next run
-        with open("token.json", "w") as token:
+        with open(token_json_path, "w") as token:
             token.write(creds.to_json())
     return creds
 def create_empty_list(save_list:list[list], depth:int):
@@ -44,21 +46,53 @@ def create_empty_list(save_list:list[list], depth:int):
     return save_list
 def traverse_stat_tree(cur_node:StatNode, save_list:list[list], depth:int, attr:str, max_depth:int):
     attr_value = round_value(getattr(cur_node, attr))
-    print(f"[INFO] Traversing {cur_node._name} , leaf_children: {cur_node.num_leaf_children}, attr value: {attr_value}")
+    #print(f"[INFO] Traversing {cur_node._name} , leaf_children: {cur_node.num_leaf_children}, attr value: {attr_value}, depth: {depth}")
     if cur_node.is_leaf or depth >= max_depth:
         # should return!
         # but record first    
         save_list[depth].append(f"{cur_node._name}:{attr_value}")
-        return
-    num_leaf_children = cur_node.num_leaf_children[max_depth - 1 - depth if max_depth - 1 - depth >= 0 else -1]
-    node_name_position = (num_leaf_children - 1) // 2 #  0-based list
-    cur_len = len(save_list[depth])
-    save_list[depth] = save_list[depth] + [""] * (num_leaf_children)
-    save_list[depth][cur_len + node_name_position] = f"{cur_node._name}:{attr_value}"
+        for i in range(depth+1, max_depth+1):
+            save_list[i].append("")
+        return 1
+    sum_len = 0
     for child in cur_node.children:
-        traverse_stat_tree(child, save_list, depth + 1, attr, max_depth)
+        sum_len += traverse_stat_tree(child, save_list, depth + 1, attr, max_depth)
+    #print(f"[INFO] Sum length of {cur_node._name} is {sum_len}")
+    node_name_position = (sum_len - 1) // 2 #  0-based list
+    cur_len = len(save_list[depth])
+    save_list[depth] = save_list[depth] + [""] * (sum_len)
+    save_list[depth][cur_len + node_name_position] = f"{cur_node._name}:{attr_value}"
+    return sum_len
+def convert_column_to_int(column:str) -> int:
+    """
+    for example, 'A' -> 1, 'AA' -> 28, 'AB' -> 29, 'BA' -> 55
+    """
+    sum = 0
+    for i in reversed(range(len(column))):
+        sum += sum * 27 + ord(column[i]) - ord('A') + 1
+    return sum
+def convert_int_to_column(num:int) -> str:
+    """
+    for example, 1 -> 'A', 28 -> 'AA', 29 -> 'AB', 55 -> 'BA'
+    """
+    column = ""
+    while num > 0:
+        column = chr(num % 27 - 1 + ord('A')) + column
+        num = num // 27
+    return column
+def get_valid_column(st_column:str, length:int) -> str:
+    """
+    for example, 'A' + 27 = 'AA', 'A' + 27 + 1 = 'AB', 'AB' + 27 = 'BB'
+    """
+    st_colum_int = convert_column_to_int(st_column)
+    end_column_int = st_colum_int + length
+    
+    end_colum_str = convert_int_to_column(end_column_int)
+    print(f"[INFO] Get valid column from {st_column}: {st_colum_int} + {length} = {end_column_int} -> {end_colum_str}")
+    return end_colum_str
+    
 class StatUpdate(abc.ABC):
-    def __init__(self, spreadsheet_id:str, start_range:str, creds: Credentials = None, value_input_option:str = "USER_ENTERED"):
+    def __init__(self, spreadsheet_id:str, sheet_id:str ,start_range:str, creds: Credentials = None, value_input_option:str = "USER_ENTERED"):
         if not creds or not creds.valid:
             print("[INFO] No valid credentials provided. Try load from token.json.")
             creds = init_googleapi_credentials()
@@ -68,6 +102,7 @@ class StatUpdate(abc.ABC):
         self.range_column = start_range[0]
         self.value_input_option = value_input_option
         assert self.range_column.isalpha()
+        self.sheet_id = sheet_id
         self.range_row = start_range[1]
         assert self.range_row.isdigit()
         self.attr_dict = {
@@ -86,8 +121,9 @@ class StatUpdate(abc.ABC):
             print(f"[ERROR] {e}")
             return
         print("[INFO] Stats computed.")
-
-    def parse_info(self, max_depth = 3):
+    def get_model_and_input_shape(self):
+        return nn.Identity(), (3, 256, 256)
+    def parse_info(self, max_depth = 5):
         """
             This function parse precomputed stats in self.df_stats, and return a values that can be used to update the google sheet.
             in df_stat, we currently care about three columns:
@@ -104,7 +140,7 @@ class StatUpdate(abc.ABC):
             We call "Name.index" a layer. For example, "down.3.mid.4.conv1" has a height of 3 levels(the last conv1 is seemed as a level).
 
             The returned value should a list (of list), designed as follows:
-                         params:                       flops:
+                         params                       flops
                             down:sum                  The same
             1           |        2:sum |    3| 
             mid
@@ -115,7 +151,6 @@ class StatUpdate(abc.ABC):
         assert hasattr(self, "stat_tree")
         root_node = self.stat_tree.root_node
         root_max_height = root_node._depth
-        print(f"[INFO] Max height of the tree is {root_max_height}, max depth is {max_depth}")
         for attr in self.attr_dict.keys():
             print(f"[INFO] Parsing {attr}")
             save_list = create_empty_list([], max_depth)
@@ -133,12 +168,11 @@ class StatUpdate(abc.ABC):
             body = {"values": _values}
             length = len(_values)
             max_depth = len(_values[0])
-            print(length, max_depth)
-            end_column = chr(ord(self.range_column) +length +1)
-            end_row = int(self.range_row) + max_depth + 1
-            range_name = f"{SAMPLE_RANGE_NAME}!{self.range_column}{self.range_row}:{end_column}{end_row}"
-            self.range_row = end_row 
-            print(f"[INFO] Updating {key} to {range_name}")
+            end_column = get_valid_column(self.range_column, max_depth + 1)
+            end_row = int(self.range_row) + length + 1
+            range_name = f"{self.sheet_id}!{self.range_column}{self.range_row}:{end_column}{end_row}"
+            self.range_row = end_row + 1
+            print(f"[INFO] Updating {key} to {self.sheet_id}!{range_name}")
             try:
                 result = (
                     self.service.spreadsheets()
@@ -155,6 +189,10 @@ class StatUpdate(abc.ABC):
                 print(f"An error occurred when updating {key}: {error}")
                 return error
         print('[INFO] Update finished.')
+    def run(self):
+        self.update(self.get_model_and_input_shape())
+        self.parse_info()
+        self.update_to_googlesheet()
 class nested_model(nn.Module):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__()
@@ -184,17 +222,28 @@ class test_model(nn.Module):
         x = self.bn(x)
         return x           
 import sys
-import os
-# add ../VAR to sys.path    
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'VAR'))
-from models import VQVAE
-def main():
+sys.setrecursionlimit(1500) # compromise for bad implementation of torchstat
+
+def nested_test():
     creds = init_googleapi_credentials()
-    stat_update = StatUpdate(SAMPLE_SPREADSHEET_ID, 'B11', creds)
-    #test_example = VQVAE()
+    stat_update = StatUpdate(SAMPLE_SPREADSHEET_ID, 'B2', creds)
     test_example = test_model()
     stat_update.update(test_example, (3, 256, 256))
-    stat_update.parse_info()
+    stat_update.parse_info(4)
+    print(stat_update.attr_dict)
+    stat_update.update_to_googlesheet()
+def main():
+    spreadsheet_id = sys.argv[1]
+    sheet_id = sys.argv[2]
+    json_dir_path = sys.argv[3]
+    assert os.path.isdir(json_dir_path)
+    start_range = sys.argv[4] if len(sys.argv) > 4 else 'B2'
+    creds = init_googleapi_credentials(json_dir_path)
+    stat_update = StatUpdate(spreadsheet_id, sheet_id , start_range, creds)
+    test_example = VQVAE()
+    #test_example = test_model()
+    stat_update.update(test_example, (3, 256, 256))
+    stat_update.parse_info(4)
     print(stat_update.attr_dict)
     stat_update.update_to_googlesheet()
 
